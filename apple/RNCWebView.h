@@ -73,6 +73,10 @@
 @property (nonatomic, assign) WKContentMode contentMode;
 #endif
 
+#if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000 /* iOS 11 */
+@property (nonatomic, assign) BOOL blockAds;
+#endif
+
 + (void)setClientAuthenticationCredential:(nullable NSURLCredential*)credential;
 + (void)setCustomCertificatesForHost:(nullable NSDictionary *)certificates;
 - (void)postMessage:(NSString *_Nullable)message;

@@ -279,6 +279,7 @@ export interface CommonNativeWebViewProps extends ViewProps {
    * Append to the existing user-agent. Overridden if `userAgent` is set.
    */
   applicationNameForUserAgent?: string;
+  blockAds?: boolean;
 }
 
 export interface AndroidNativeWebViewProps extends CommonNativeWebViewProps {
@@ -1093,4 +1094,9 @@ export interface WebViewSharedProps extends ViewProps {
    * Append to the existing user-agent. Overridden if `userAgent` is set.
    */
   applicationNameForUserAgent?: string;
+
+  /**
+   * Should block ads. Default is false.
+   */
+  blockAds?: boolean;
 }

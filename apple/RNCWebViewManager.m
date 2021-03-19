@@ -89,6 +89,10 @@ RCT_EXPORT_VIEW_PROPERTY(automaticallyAdjustsScrollIndicatorInsets, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(contentMode, WKContentMode)
 #endif
 
+#if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000 /* iOS 11 */
+RCT_EXPORT_VIEW_PROPERTY(blockAds, BOOL)
+#endif
+
 /**
  * Expose methods to enable messaging the webview.
  */

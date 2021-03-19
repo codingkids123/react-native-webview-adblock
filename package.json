@@ -1,15 +1,14 @@
 {
-  "name": "react-native-webview",
-  "description": "React Native WebView component for iOS, Android, macOS, and Windows",
+  "name": "@drawerapp/test-react-native-webview",
+  "description": "Folk of React Native WebView component for iOS, Android, macOS, and Windows",
   "main": "index.js",
   "typings": "index.d.ts",
-  "author": "Jamon Holmgren <jamon@infinite.red>",
+  "author": "",
   "contributors": [
-    "Thibault Malbranche <malbranche.thibault@gmail.com>"
   ],
   "license": "MIT",
-  "version": "11.2.3",
-  "homepage": "https://github.com/react-native-webview/react-native-webview#readme",
+  "version": "0.0.22",
+  "homepage": "https://www.github.com",
   "scripts": {
     "start": "node node_modules/react-native/local-cli/cli.js start",
     "start:android": "react-native run-android",
@@ -74,7 +73,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/react-native-webview/react-native-webview.git"
+    "url": ""
   },
   "files": [
     "android",
