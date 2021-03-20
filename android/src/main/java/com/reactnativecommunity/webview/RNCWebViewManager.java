@@ -82,14 +82,19 @@ import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -458,6 +463,11 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     ((RNCWebView) view).setMessagingModuleName(moduleName);
   }
 
+  @ReactProp(name = "blockAds")
+  public void setBlockAds(WebView view, boolean blockAds) {
+    ((RNCWebView) view).setBlockAds(blockAds);
+  }
+
   @ReactProp(name = "incognito")
   public void setIncognito(WebView view, boolean enabled) {
     // Don't do anything when incognito is disabled
@@ -812,9 +822,54 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     ReadableArray mUrlPrefixesForDefaultIntent;
     protected RNCWebView.ProgressChangedFilter progressChangedFilter = null;
     protected @Nullable String ignoreErrFailedForThisURL = null;
+    protected boolean blockAds = false;
+    static protected Set<String> blockedDomains = new HashSet<String>();
+
+    static {
+      try {
+        String domainBlockListPath = "/res/raw/adsblockdomains.txt";
+        Log.i("RNCWebViewManager", "Loading block domain list from " + domainBlockListPath);
+        InputStream is = RNCWebViewClient.class.getResourceAsStream(domainBlockListPath);
+        BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+        String line = reader.readLine();
+        while (line != null) {
+          blockedDomains.add(line);
+          line = reader.readLine();
+        }
+        Log.i("RNCWebViewManager", "Successfully loaded block domain list: " + blockedDomains.size());
+      } catch (Exception error) {
+        Log.e("RNCWebViewManager", "Error loading block domain list: ", error);
+        ;
+      }
+    }
 
     public void setIgnoreErrFailedForThisURL(@Nullable String url) {
       ignoreErrFailedForThisURL = url;
+    }
+
+    public void setBlockAds(boolean blockAds) {
+      this.blockAds = blockAds;
+    }
+
+    @Override
+    public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+      if (!blockAds) {
+        return null;
+      }
+      if (!URLUtil.isNetworkUrl(url)) {
+        return null;
+      }
+      String domain = "";
+      try {
+        domain = new URL(url).getAuthority();
+      } catch (Exception error) {
+        ;
+      }
+      Log.i("RNCWebViewManager", "Filtering domain: " + domain);
+      if (!blockedDomains.contains(domain)) {
+        return null;
+      }
+      return new WebResourceResponse("text/plain", "UTF-8", null);
     }
 
     @Override
@@ -1282,6 +1337,10 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
     public void setHasScrollEvent(boolean hasScrollEvent) {
       this.hasScrollEvent = hasScrollEvent;
+    }
+
+    public void setBlockAds(boolean blockAds) {
+      mRNCWebViewClient.setBlockAds(blockAds);
     }
 
     @Override
