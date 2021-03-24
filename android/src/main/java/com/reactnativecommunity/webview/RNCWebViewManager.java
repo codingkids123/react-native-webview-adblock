@@ -69,6 +69,7 @@ import com.facebook.react.uimanager.annotations.ReactProp;
 import com.facebook.react.uimanager.events.ContentSizeChangeEvent;
 import com.facebook.react.uimanager.events.Event;
 import com.facebook.react.uimanager.events.EventDispatcher;
+import com.loopj.android.http.PersistentCookieStore;
 import com.reactnativecommunity.webview.RNCWebViewModule.ShouldOverrideUrlLoadingLock.ShouldOverrideCallbackState;
 import com.reactnativecommunity.webview.events.TopLoadingErrorEvent;
 import com.reactnativecommunity.webview.events.TopHttpErrorEvent;
@@ -78,6 +79,9 @@ import com.reactnativecommunity.webview.events.TopLoadingStartEvent;
 import com.reactnativecommunity.webview.events.TopMessageEvent;
 import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEvent;
 import com.reactnativecommunity.webview.events.TopRenderProcessGoneEvent;
+import cz.msebera.android.httpclient.cookie.Cookie;
+import cz.msebera.android.httpclient.impl.cookie.BasicClientCookie;
+import okhttp3.HttpUrl;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -470,8 +474,39 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
   @ReactProp(name = "incognito")
   public void setIncognito(WebView view, boolean enabled) {
-    // Don't do anything when incognito is disabled
+    // Restore cookies when incognito is disabled
+    ((RNCWebView) view).setIncognito(enabled);
+    PersistentCookieStore cookieStore = ((RNCWebView) view).getCookieStore();
     if (!enabled) {
+      // Restore cookie if necessary.
+      CookieManager cookieManager = CookieManager.getInstance();
+      String regularSession = cookieManager.getCookie("localhost");
+      if (regularSession != null && !regularSession.isEmpty()) {
+        // Previous session is a regular session, no need to restore cookie.
+        return;
+      }
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        cookieManager.removeAllCookies(null);
+      } else {
+        cookieManager.removeAllCookie();
+      }
+      for (Cookie cookie : cookieStore.getCookies()) {
+        String cookieUrl = "";
+        if (cookie.isSecure()) {
+          cookieUrl = "https://" + cookie.getDomain() + "/";
+        } else {
+          cookieUrl = "http://" + cookie.getDomain() + "/";
+        }
+        String cookieStr = String.format(
+          "%s=%s; Domain=.%s; HTTPOnly", cookie.getName(), cookie.getValue(), cookie.getDomain());
+        if (cookie.isSecure()) {
+          cookieStr = cookieStr + "; Secure";
+        }
+        cookieManager.setCookie(cookieUrl, cookieStr);
+      }
+      // Mark this is a regular session.
+      cookieManager.setCookie("localhost", "regularSession=true");
       return;
     }
 
@@ -822,8 +857,11 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     ReadableArray mUrlPrefixesForDefaultIntent;
     protected RNCWebView.ProgressChangedFilter progressChangedFilter = null;
     protected @Nullable String ignoreErrFailedForThisURL = null;
-    protected boolean blockAds = false;
-    static protected Set<String> blockedDomains = new HashSet<String>();
+
+    protected boolean mBlockAds = false;
+    protected boolean mIncognito = false;
+    
+    static protected Set<String> mBlockedDomains = new HashSet<String>();
 
     static {
       try {
@@ -833,13 +871,35 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
         BufferedReader reader = new BufferedReader(new InputStreamReader(is));
         String line = reader.readLine();
         while (line != null) {
-          blockedDomains.add(line);
+          mBlockedDomains.add(line);
           line = reader.readLine();
         }
-        Log.i("RNCWebViewManager", "Successfully loaded block domain list: " + blockedDomains.size());
+        Log.i("RNCWebViewManager", "Successfully loaded block domain list: " + mBlockedDomains.size());
       } catch (Exception error) {
         Log.e("RNCWebViewManager", "Error loading block domain list: ", error);
         ;
+      }
+    }
+
+    private void extractAndBackupCookie(WebView webView, String url) {
+      // Extract cookie from WebView cookie manager and store in persistent cookie store.
+      HttpUrl httpUrl = HttpUrl.parse(url);
+      String cookies = CookieManager.getInstance().getCookie(url);
+      if (httpUrl != null && cookies != null && !cookies.isEmpty()) {
+        PersistentCookieStore cookieStore = ((RNCWebView) webView).getCookieStore();
+        String[] cookieArray = cookies.split(";");
+        for (String cookieStr : cookieArray ){
+          int idx = cookieStr.indexOf("=");
+          if (idx != -1) {
+            String name = cookieStr.substring(0, idx).trim();
+            String value = cookieStr.substring(idx + 1).trim();
+            BasicClientCookie newCookie = new BasicClientCookie(name, value);
+            // Only store as top level domain to make sure other sub-domain can access the cookie.
+            newCookie.setDomain(httpUrl.topPrivateDomain());
+            newCookie.setSecure(httpUrl.isHttps());
+            cookieStore.addCookie(newCookie);
+          }
+        }
       }
     }
 
@@ -847,26 +907,32 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
       ignoreErrFailedForThisURL = url;
     }
 
+    public void setIncognito(boolean incognito) {
+      mIncognito = incognito;
+    }
+
     public void setBlockAds(boolean blockAds) {
-      this.blockAds = blockAds;
+      mBlockAds = blockAds;
     }
 
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
-      if (!blockAds) {
+      if (!mBlockAds) {
+        if (!mIncognito) {
+          // Best effort to backup 3rd party cookie since this is before the response is received.
+          extractAndBackupCookie(view, url);
+        }
         return null;
       }
-      if (!URLUtil.isNetworkUrl(url)) {
+      HttpUrl httpUrl = HttpUrl.parse(url);
+      if (httpUrl == null) {
         return null;
       }
-      String domain = "";
-      try {
-        domain = new URL(url).getAuthority();
-      } catch (Exception error) {
-        ;
-      }
-      Log.i("RNCWebViewManager", "Filtering domain: " + domain);
-      if (!blockedDomains.contains(domain)) {
+      if (!mBlockedDomains.contains(httpUrl.host())) {
+        if (!mIncognito) {
+          // Best effort to backup 3rd party cookie since this is before the response is received.
+          extractAndBackupCookie(view, url);
+        }
         return null;
       }
       return new WebResourceResponse("text/plain", "UTF-8", null);
@@ -875,6 +941,10 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     @Override
     public void onPageFinished(WebView webView, String url) {
       super.onPageFinished(webView, url);
+
+      if (!mIncognito) {
+        extractAndBackupCookie(webView, url);
+      }
 
       if (!mLastLoadFailed) {
         RNCWebView reactWebView = (RNCWebView) webView;
@@ -1189,6 +1259,7 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
       String[] requestedResources = request.getResources();
       ArrayList<String> permissions = new ArrayList<>();
       ArrayList<String> grantedPermissions = new ArrayList<String>();
+      ArrayList<String> permissionsToRequest = new ArrayList<String>();
       for (int i = 0; i < requestedResources.length; i++) {
         if (requestedResources[i].equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
           permissions.add(Manifest.permission.RECORD_AUDIO);
@@ -1200,6 +1271,7 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
       for (int i = 0; i < permissions.size(); i++) {
         if (ContextCompat.checkSelfPermission(mReactContext, permissions.get(i)) != PackageManager.PERMISSION_GRANTED) {
+          permissionsToRequest.add(permissions.get(i));
           continue;
         }
         if (permissions.get(i).equals(Manifest.permission.RECORD_AUDIO)) {
@@ -1209,11 +1281,13 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
         }
       }
 
-      if (grantedPermissions.isEmpty()) {
-        request.deny();
+      String[] grantedPermissionsArray = new String[grantedPermissions.size()];
+      grantedPermissionsArray = grantedPermissions.toArray(grantedPermissionsArray);
+      if (grantedPermissions.size() != permissions.size()) {
+        String[] permissionsToRequestArray = new String[permissionsToRequest.size()];
+        permissionsToRequestArray = permissionsToRequest.toArray(permissionsToRequestArray);
+        getModule(mReactContext).grantWebPermissions(request, permissionsToRequestArray, grantedPermissionsArray);
       } else {
-        String[] grantedPermissionsArray = new String[grantedPermissions.size()];
-        grantedPermissionsArray = grantedPermissions.toArray(grantedPermissionsArray);
         request.grant(grantedPermissionsArray);
       }
     }
@@ -1241,7 +1315,9 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
     @Override
     public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-      callback.invoke(origin, true, false);
+      if (getModule(mReactContext).grantGeoPermissions(callback, origin)) {
+        callback.invoke(origin, true, false);
+      }
     }
 
     protected void openFileChooser(ValueCallback<Uri> filePathCallback, String acceptType) {
@@ -1315,6 +1391,9 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
     protected boolean hasScrollEvent = false;
     protected ProgressChangedFilter progressChangedFilter;
 
+    protected @Nullable
+    PersistentCookieStore mCookieStore;
+
     /**
      * WebView must be created with an context of the current activity
      * <p>
@@ -1325,6 +1404,7 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
       super(reactContext);
       this.createCatalystInstance();
       progressChangedFilter = new ProgressChangedFilter();
+      mCookieStore = new PersistentCookieStore(reactContext);
     }
 
     public void setIgnoreErrFailedForThisURL(String url) {
@@ -1341,6 +1421,14 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
 
     public void setBlockAds(boolean blockAds) {
       mRNCWebViewClient.setBlockAds(blockAds);
+    }
+
+    public void setIncognito(boolean incognito) {
+      mRNCWebViewClient.setIncognito(incognito);
+    }
+
+    public PersistentCookieStore getCookieStore() {
+      return mCookieStore;
     }
 
     @Override

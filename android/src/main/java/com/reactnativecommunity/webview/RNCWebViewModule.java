@@ -1,6 +1,7 @@
 package com.reactnativecommunity.webview;
 
 import android.Manifest;
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.Context;
@@ -14,12 +15,15 @@ import android.provider.MediaStore;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.core.util.Pair;
 
 import android.util.Log;
+import android.webkit.GeolocationPermissions;
 import android.webkit.MimeTypeMap;
+import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.widget.Toast;
@@ -48,6 +52,9 @@ public class RNCWebViewModule extends ReactContextBaseJavaModule implements Acti
   private static final int PICKER = 1;
   private static final int PICKER_LEGACY = 3;
   private static final int FILE_DOWNLOAD_PERMISSION_REQUEST = 1;
+  private static final int CAMERA_PERMISSION_REQUEST = 2;
+  private static final int GEO_PERMISSION_REQUEST = 3;
+  private static final int WEB_PERMISSION_REQUEST = 4;
   private ValueCallback<Uri> filePathCallbackLegacy;
   private ValueCallback<Uri[]> filePathCallback;
   private File outputImage;
@@ -93,6 +100,100 @@ public class RNCWebViewModule extends ReactContextBaseJavaModule implements Acti
     MimeType(String value) {
       this.value = value;
     }
+  }
+
+  private class GeoPermissionListener implements PermissionListener {
+
+    GeolocationPermissions.Callback callback;
+    String origin;
+
+    public GeoPermissionListener(GeolocationPermissions.Callback callback, String origin) {
+      this.callback = callback;
+      this.origin = origin;
+    }
+
+    @Override
+    public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+      switch (requestCode) {
+        case GEO_PERMISSION_REQUEST: {
+          // If request is cancelled, the result arrays are empty.
+          if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            this.callback.invoke(this.origin, true, false);
+          } else {
+            this.callback.invoke(this.origin, false, false);
+          }
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  private class WebPermissionListener implements PermissionListener {
+
+    PermissionRequest request;
+    String[] alreadyGrantedPermissions;
+    String[] requestPermissions;
+
+    public WebPermissionListener(PermissionRequest request, String[] requestPermissions, String[] alreadyGrantedPermissions) {
+      this.request = request;
+      this.requestPermissions = requestPermissions;
+      this.alreadyGrantedPermissions = alreadyGrantedPermissions;
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    @Override
+    public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+      ArrayList<String> finalPermissionsToGrant = new ArrayList<>(Arrays.asList(this.alreadyGrantedPermissions));
+      switch (requestCode) {
+        case WEB_PERMISSION_REQUEST: {
+          for (int i = 0; i < permissions.length; i++) {
+            if (grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+              if (permissions[i].equals(Manifest.permission.RECORD_AUDIO)) {
+                finalPermissionsToGrant.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
+              } else if (permissions[i].equals(Manifest.permission.CAMERA)) {
+                finalPermissionsToGrant.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
+              }
+            }
+          }
+          if (finalPermissionsToGrant.size() > 0) {
+            String[] finalPermissionsToGrantArray = new String[finalPermissionsToGrant.size()];
+            finalPermissionsToGrantArray = finalPermissionsToGrant.toArray(finalPermissionsToGrantArray);
+            request.grant(finalPermissionsToGrantArray);
+          } else {
+            request.deny();
+          }
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  private class CameraPermissionListener implements PermissionListener {
+
+    Intent chooserIntent;
+    ArrayList<Parcelable> extraIntents;
+
+    public CameraPermissionListener(Intent chooserIntent, ArrayList<Parcelable> extraIntents) {
+      this.chooserIntent = chooserIntent;
+      this.extraIntents = extraIntents;
+    }
+
+    @Override
+    public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+      switch (requestCode) {
+        case CAMERA_PERMISSION_REQUEST: {
+          if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraIntents.toArray(new Parcelable[]{}));
+          }
+          getCurrentActivity().startActivityForResult(chooserIntent, PICKER);
+          return true;
+        }
+      }
+      return false;
+    }
+
   }
 
   private PermissionListener webviewFileDownloaderPermissionListener = new PermissionListener() {
@@ -272,18 +373,20 @@ public class RNCWebViewModule extends ReactContextBaseJavaModule implements Acti
     filePathCallback = callback;
 
     ArrayList<Parcelable> extraIntents = new ArrayList<>();
-    if (!needsCameraPermission()) {
-      if (acceptsImages(acceptTypes)) {
-        Intent photoIntent = getPhotoIntent();
-        if (photoIntent != null) {
-          extraIntents.add(photoIntent);
-        }
+    boolean needCamera = false;
+
+    if (acceptsImages(acceptTypes)) {
+      Intent photoIntent = getPhotoIntent();
+      if (photoIntent != null) {
+        needCamera = true;
+        extraIntents.add(photoIntent);
       }
-      if (acceptsVideo(acceptTypes)) {
-        Intent videoIntent = getVideoIntent();
-        if (videoIntent != null) {
-          extraIntents.add(videoIntent);
-        }
+    }
+    if (acceptsVideo(acceptTypes)) {
+      Intent videoIntent = getVideoIntent();
+      if (videoIntent != null) {
+        needCamera = true;
+        extraIntents.add(videoIntent);
       }
     }
 
@@ -291,10 +394,19 @@ public class RNCWebViewModule extends ReactContextBaseJavaModule implements Acti
 
     Intent chooserIntent = new Intent(Intent.ACTION_CHOOSER);
     chooserIntent.putExtra(Intent.EXTRA_INTENT, fileSelectionIntent);
-    chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraIntents.toArray(new Parcelable[]{}));
 
     if (chooserIntent.resolveActivity(getCurrentActivity().getPackageManager()) != null) {
-      getCurrentActivity().startActivityForResult(chooserIntent, PICKER);
+      if (needCamera && needsCameraPermission() && !ActivityCompat.shouldShowRequestPermissionRationale(getCurrentActivity(), Manifest.permission.CAMERA)) {
+        // Only ask camera permission if not asked before.
+        grantCameraPermissions(chooserIntent, extraIntents);
+      } else {
+        // Do not need to request permission from user.
+        if (needCamera && !needsCameraPermission()) {
+          // Camera permission is already granted.
+          chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraIntents.toArray(new Parcelable[]{}));
+        }
+        getCurrentActivity().startActivityForResult(chooserIntent, PICKER);
+      }
     } else {
       Log.w("RNCWebViewModule", "there is no Activity to handle this Intent");
     }
@@ -328,6 +440,31 @@ public class RNCWebViewModule extends ReactContextBaseJavaModule implements Acti
     }
 
     return result;
+  }
+
+  public boolean grantCameraPermissions(Intent chooserIntent, ArrayList<Parcelable> extraIntents) {
+    boolean result = ContextCompat.checkSelfPermission(getCurrentActivity(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    if (!result && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PermissionAwareActivity activity = getPermissionAwareActivity();
+      activity.requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST, new CameraPermissionListener(chooserIntent, extraIntents));
+    }
+    return result;
+  }
+
+  public boolean grantGeoPermissions(GeolocationPermissions.Callback callback, String origin) {
+    boolean result = ContextCompat.checkSelfPermission(getCurrentActivity(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    if (!result && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PermissionAwareActivity activity = getPermissionAwareActivity();
+      activity.requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, GEO_PERMISSION_REQUEST, new GeoPermissionListener(callback, origin));
+    }
+    return result;
+  }
+
+  public void grantWebPermissions(PermissionRequest request, String[] permissionsToRequest, String[] alreadyGrantedPermissions) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PermissionAwareActivity activity = getPermissionAwareActivity();
+      activity.requestPermissions(permissionsToRequest, WEB_PERMISSION_REQUEST, new WebPermissionListener(request, permissionsToRequest, alreadyGrantedPermissions));
+    }
   }
 
   protected boolean needsCameraPermission() {
