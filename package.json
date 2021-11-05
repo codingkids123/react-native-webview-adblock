@@ -1,5 +1,5 @@
 {
-  "name": "@drawerapp/test-react-native-webview",
+  "name": "@drawerapp/react-native-webview-adblock",
   "description": "Folk of React Native WebView component for iOS, Android, macOS, and Windows",
   "main": "index.js",
   "typings": "index.d.ts",
@@ -7,7 +7,7 @@
   "contributors": [
   ],
   "license": "MIT",
-  "version": "0.0.87",
+  "version": "1.0.0",
   "homepage": "https://www.github.com",
   "scripts": {
     "start": "node node_modules/react-native/local-cli/cli.js start",
