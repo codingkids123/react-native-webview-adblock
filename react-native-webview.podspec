@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.homepage     = package['homepage']
   s.platforms    = { :ios => "9.0", :osx => "10.13" }
 
-  s.source       = { :git => "https://github.com/zhoulu312/react-native-webview.git", :branch => "adblock" }
+  s.source       = { :git => "https://github.com/drawerapp/react-native-webview-adblock.git", :branch => "adblock" }
   s.source_files  = "apple/**/*.{h,m}"
   s.resource_bundles = {
     'RNCWebView' => ["apple/**/*.json"]
